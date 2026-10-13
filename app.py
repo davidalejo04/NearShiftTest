@@ -420,41 +420,56 @@ st.markdown("---")
 st.subheader("👾 PREGUNTALE A LA IA 👾")
 
 
-client = Groq(api_key=os.environ["API_K"])  # no dejes la clave escrita en el código
-
-# 1) Resumen con pandas: cumplimiento y ventas por producto (categoría)
+# 1) Resumen con pandas (usa items y orders, que ya cambian con el filtro del mapa)
 d = items.merge(orders[["order_id", "is_delivered", "on_time", "payment_value"]], on="order_id")
-d["revenue"] = d["payment_value"] / d.groupby("order_id")["order_id"].transform("size")  # reparte el pago entre los ítems
+d["revenue"] = d["payment_value"] / d.groupby("order_id")["order_id"].transform("size")
 d = d[d["is_delivered"]]
 
 resumen = (
     d.groupby("product_category_name")
      .agg(unidades=("order_id", "size"), revenue=("revenue", "sum"), cumplimiento=("on_time", "mean"))
-     .query("unidades >= 30")                      # evita categorías con muestra muy pequeña
+     .query("unidades >= 30")
      .assign(cumplimiento=lambda x: x["cumplimiento"] * 100)
      .sort_values("cumplimiento", ascending=False)
      .head(15)
      .round(1)
 )
-print(resumen)                                     # esta tabla ya responde la pregunta
 
-# 2) Solo la tabla resumida va al modelo
-prompt = f"""Tienes esta tabla de las 15 categorías con mayor % de cumplimiento de envíos
+st.write("Categorías con mayor % de cumplimiento de envíos:")
+st.dataframe(resumen)                      # antes era print(resumen)
+
+# 2) Pregunta a la IA solo cuando se presiona el botón (evita llamadas en cada rerun)
+if st.button("Analizar con IA"):
+    if resumen.empty:
+        st.warning("No hay suficientes datos para la selección actual.")
+    else:
+        prompt = f"""Tienes esta tabla de las categorías con mayor % de cumplimiento de envíos
 (unidades vendidas, revenue y cumplimiento):
 
 {resumen.to_csv()}
 
-Pregunta: ¿cuál de las categorías con mayor cumplimiento tiene mejor desempeño de ventas?
+Pregunta: ¿cuál de estas categorías tiene mejor desempeño de ventas?
 Responde en español, breve y citando las cifras."""
 
-completion = client.chat.completions.create(
-    model="openai/gpt-oss-120b",               # modelo de chat
-    messages=[{"role": "user", "content": prompt}],
-    temperature=0.3,
-    max_completion_tokens=800,
-)
-print(completion.choices[0].message.content)
-
+        try:
+            client = Groq(api_key=os.environ["API_K"])
+            with st.spinner("Pensando..."):
+                completion = client.chat.completions.create(
+                    model="openai/gpt-oss-120b",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_completion_tokens=3000,   # el razonamiento también consume tokens
+                    reasoning_effort="low",
+                )
+            choice = completion.choices[0]
+            texto = choice.message.content
+            if texto and texto.strip():
+                st.markdown(texto)                # antes era print(...)
+            else:
+                st.warning(f"El modelo no devolvió texto (finish_reason: {choice.finish_reason}). "
+                           "Sube max_completion_tokens o prueba otro modelo.")
+        except Exception as e:
+            st.error(f"Error al consultar la IA: {e}")
 
 st.markdown("---")
 
