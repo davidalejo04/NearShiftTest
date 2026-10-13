@@ -459,7 +459,7 @@ Pregunta: ¿cuál de las categorías con mayor cumplimiento tiene mejor desempe�
 Responde en español, breve y citando las cifras."""
 
 completion = client.chat.completions.create(
-    model="llama-3.1-8b-instant",               # modelo de chat
+    model="openai/gpt-oss-120b",               # modelo de chat
     messages=[{"role": "user", "content": prompt}],
     temperature=0.3,
     max_completion_tokens=800,
