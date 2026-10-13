@@ -96,6 +96,8 @@ A **semantic model was developed in the gold layer** on top of the tables listed
 
 ## Streamlit Dashboard
 
+(https://nearshifttest-6ijqbedpyyqiuhq9kudypx.streamlit.app).
+
 ### KPIs (top row)
 
 - **Total revenue**
