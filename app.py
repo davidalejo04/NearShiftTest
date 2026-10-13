@@ -424,7 +424,7 @@ contexto_dataframes = f"""
 Aquí tienes los 3 DataFrames para analizar:
 
 ### DataFrame 1: Productos
-{orders.to_markdown(index=False)}
+{orders.head(1000).to_markdown(index=False)}
 
 """
 
