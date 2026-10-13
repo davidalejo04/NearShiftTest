@@ -7,6 +7,8 @@ import urllib.request
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+
+from groq import Groq
  
 # ----------------------------------------------------------------------------
 # Configuración de la página (sin panel lateral)
@@ -35,6 +37,8 @@ WINDOWS = {"3 meses": 90, "7 meses": 210, "2 años": 730}  # ventanas de recompr
  
 MAP_STYLE = "carto-positron"   # mapa base limpio, sin necesidad de token
 COLOR_SCALE = "YlGnBu"
+
+API_K = st.secrets["API_K"]
  
 METRICS = {
     "Revenue total":              dict(label="Revenue ($)",          prefix="$", suffix="",  fmt=",.0f"),
@@ -414,7 +418,43 @@ st.markdown("---")
 
 st.subheader("👾 PREGUNTALE A LA IA 👾")
 
+# 2. Convertirlos a texto en formato Markdown
+contexto_dataframes = f"""
+Aquí tienes los 3 DataFrames para analizar:
 
+### DataFrame 1: Productos
+{orders.to_markdown(index=False)}
+
+### DataFrame 2: Ventas
+{customers.to_markdown(index=False)}
+
+### DataFrame 3: Inventario
+{payments.to_markdown(index=False)}
+
+
+### DataFrame 4: Ventas
+{items.to_markdown(index=False)}
+
+### DataFrame 5: Inventario
+{products.to_markdown(index=False)}
+"""
+
+
+# 3. Enviar a la API de Groq
+client = Groq(api_key=API_K)
+
+prompt = f"""
+{contexto_dataframes}
+
+Pregunta: Analiza los  conjuntos de datos y dime qué producto con mayor cumplimiento de envios tiene mejor desempeño de ventas.
+"""
+
+chat_completion = client.chat.completions.create(
+    messages=[{"role": "user", "content": prompt}],
+    model="llama3-8b-8192",  # O el modelo de Groq que prefieras
+)
+
+print(chat_completion.choices[0].message.content)
 
 
 st.markdown("---")
