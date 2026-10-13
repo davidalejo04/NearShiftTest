@@ -420,41 +420,88 @@ st.markdown("---")
 st.subheader("👾 PREGUNTALE A LA IA 👾")
 
 
-# 1) Resumen con pandas (usa items y orders, que ya cambian con el filtro del mapa)
-d = items.merge(orders[["order_id", "is_delivered", "on_time", "payment_value"]], on="order_id")
+# --- Datos base (igual que el tuyo, solo agrego order_month para poder responder por mes) ---
+d = items.merge(orders[["order_id", "is_delivered", "on_time", "payment_value", "order_month"]], on="order_id")
 d["revenue"] = d["payment_value"] / d.groupby("order_id")["order_id"].transform("size")
 d = d[d["is_delivered"]]
 
-                   # antes era print(resumen)
 
-# 2) Pregunta a la IA solo cuando se presiona el botón (evita llamadas en cada rerun)
-contexto_dataframes = f"""
-{d.to_markdown(index=False)}
-"""
-prompt = f"""
-{contexto_dataframes}
+def resumen(df, col, top=None, min_unidades=1):
+    t = (df.groupby(col)
+           .agg(unidades=("order_id", "size"), revenue=("revenue", "sum"), cumplimiento=("on_time", "mean"))
+           .query("unidades >= @min_unidades")
+           .assign(cumplimiento=lambda x: x["cumplimiento"] * 100)
+           .sort_values("revenue", ascending=False)
+           .round(1))
+    return (t.head(top) if top else t).to_csv()
 
-Pregunta: Analiza los 3 conjuntos de datos y dime qué producto tiene mejor rendimiento de ventas en relación a su stock.
-"""
-try:
-    client = Groq(api_key=os.environ["API_K"])
-    with st.spinner("Pensando..."):
-        completion = client.chat.completions.create(
-            model="openai/gpt-oss-120b",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_completion_tokens=3000,   # el razonamiento también consume tokens
-            reasoning_effort="low",
-        )
-    choice = completion.choices[0]
-    texto = choice.message.content
-    if texto and texto.strip():
-        st.markdown(texto)                # antes era print(...)
-    else:
-        st.warning(f"El modelo no devolvió texto (finish_reason: {choice.finish_reason}). "
-                   "Sube max_completion_tokens o prueba otro modelo.")
-except Exception as e:
-    st.error(f"Error al consultar la IA: {e}")
+
+def construir_contexto(df):
+    if df.empty:
+        return None
+    return f"""DATOS (pedidos entregados de Olist, Brasil; revenue en dólares; cumplimiento = % entregado en o antes de la fecha estimada).
+Totales: {df['order_id'].nunique():,} pedidos, {len(df):,} unidades, revenue {df['revenue'].sum():,.0f}, cumplimiento {df['on_time'].mean() * 100:.1f}%.
+
+Por categoría (top 30 por revenue, mínimo 30 unidades):
+{resumen(df, 'product_category_name', top=30, min_unidades=30)}
+Por estado:
+{resumen(df, 'customer_state')}
+Por ciudad (top 15 por revenue):
+{resumen(df, 'city_key', top=15)}
+Por mes:
+{resumen(df, 'order_month').strip()}"""
+
+
+SYSTEM = """Eres un analista de datos. Responde SOLO con base en los datos entregados, en español, breve y citando cifras.
+Si la pregunta no se puede responder con esos datos, dilo claramente; no inventes números.
+El revenue por ítem es el pago del pedido repartido en partes iguales entre sus ítems."""
+
+contexto = construir_contexto(d)
+
+# --- Historial del chat ---
+if "chat" not in st.session_state:
+    st.session_state["chat"] = []
+
+for m in st.session_state["chat"]:
+    with st.chat_message(m["role"]):
+        st.markdown(m["content"])
+
+# --- Casilla de chat: máximo 400 caracteres ---
+pregunta = st.chat_input("Pregunta sobre ventas y cumplimiento de envíos (máx. 400 caracteres)", max_chars=400)
+
+if pregunta:
+    st.session_state["chat"].append({"role": "user", "content": pregunta})
+    with st.chat_message("user"):
+        st.markdown(pregunta)
+
+    with st.chat_message("assistant"):
+        if contexto is None:
+            respuesta = "No hay datos para la selección actual."
+        elif "API_K" not in os.environ:
+            respuesta = "Falta configurar la clave de Groq (API_K)."
+        else:
+            try:
+                client = Groq(api_key=os.environ["API_K"])
+                mensajes = [{"role": "system", "content": SYSTEM + "\n\n" + contexto}] + st.session_state["chat"][-6:]
+                with st.spinner("Pensando..."):
+                    completion = client.chat.completions.create(
+                        model="openai/gpt-oss-120b",
+                        messages=mensajes,
+                        temperature=0.3,
+                        max_completion_tokens=3000,   # el razonamiento también consume tokens
+                        reasoning_effort="low",
+                    )
+                choice = completion.choices[0]
+                respuesta = (choice.message.content or "").strip() or \
+                    f"El modelo no devolvió texto (finish_reason: {choice.finish_reason})."
+            except Exception as e:
+                respuesta = f"Error al consultar la IA: {e}"
+        st.markdown(respuesta)
+    st.session_state["chat"].append({"role": "assistant", "content": respuesta})
+
+if st.session_state["chat"] and st.button("Borrar conversación"):
+    st.session_state["chat"] = []
+    st.rerun()
 
 st.markdown("---")
 
