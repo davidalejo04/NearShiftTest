@@ -443,7 +443,7 @@ completion = client.chat.completions.create(
     messages=[
       {
         "role": "user",
-        "content": ""
+        "content": prompt
       }
     ],
     temperature=1,
@@ -453,7 +453,7 @@ completion = client.chat.completions.create(
     stop=None
 )
 
-print(completion.choices[0].message)
+print(completion.choices[0].message.content)
 
 
 st.markdown("---")
