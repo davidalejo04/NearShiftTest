@@ -1,174 +1,295 @@
+import json
+import os
+import urllib.request
+ 
 import pandas as pd
-import streamlit as st
 import plotly.express as px
-
-# Configuración de la página de Streamlit
+import streamlit as st
+ 
+# ----------------------------------------------------------------------------
+# Configuración de la página
+# ----------------------------------------------------------------------------
 st.set_page_config(
     page_title="Dashboard de Logística y Ventas (Olist)",
     page_icon="📊",
-    layout="wide"
+    layout="wide",
 )
-
+ 
 st.title("📊 Dashboard Ejecutivo: Ventas, Retención y Envíos (Olist)")
 st.markdown("---")
-
-# 1. Carga de datos desde GitHub (Raw links para los múltiples archivos parquet)
-@st.cache_data
+ 
+GITHUB_BASE_URL = "https://raw.githubusercontent.com/davidalejo04/NearShiftTest/main/data"
+GEOJSON_URL = (
+    "https://raw.githubusercontent.com/codeforamerica/click_that_hood/"
+    "master/public/data/brazil-states.geojson"
+)
+# Si existe una carpeta local "data/" (o la variable DATA_DIR) se usa en lugar de GitHub
+LOCAL_DIR = os.environ.get("DATA_DIR", "data")
+ 
+# Estados de pedido que NO representan una venta real
+EXCLUDED_STATUS = ["canceled", "unavailable"]
+ 
+# Ventanas de recompra (en días) desde la primera compra del cliente
+WINDOWS = {"3 meses": 90, "7 meses": 210, "2 años": 730}
+ 
+ 
+# ----------------------------------------------------------------------------
+# Carga y preparación de datos
+# ----------------------------------------------------------------------------
+def _read(name: str) -> pd.DataFrame:
+    local_path = os.path.join(LOCAL_DIR, f"{name}.parquet")
+    if os.path.exists(local_path):
+        return pd.read_parquet(local_path)
+    return pd.read_parquet(f"{GITHUB_BASE_URL}/{name}.parquet")
+ 
+ 
+@st.cache_data(show_spinner=False)
 def load_data():
-    base_url = "https://raw.githubusercontent.com/davidalejo04/NearShiftTest/main/data"
-    
-    # Lectura de los archivos principales necesarios para el modelo relacional
-    orders = pd.read_parquet(f"{base_url}/olist_orders_dataset.parquet")
-    order_items = pd.read_parquet(f"{base_url}/olist_order_items_dataset.parquet")
-    customers = pd.read_parquet(f"{base_url}/olist_customers_dataset.parquet")
-    products = pd.read_parquet(f"{base_url}/olist_products_dataset.parquet")
-    
-    # Cruce (Merge) de las tablas para unificar el dataset de análisis
-    df = order_items.merge(orders, on="order_id", how="inner")
-    df = df.merge(customers, on="customer_id", how="inner")
-    df = df.merge(products, on="product_id", how="inner")
-    
-    return df
-
-try:
-    with st.spinner("Cargando y uniendo los conjuntos de datos desde GitHub..."):
-        df = load_data()
-except Exception as e:
-    st.error(f"No se pudieron cargar los archivos parquet desde GitHub. Verifica las rutas o la conexión. Error: {e}")
-    df = pd.DataFrame()
-
-if not df.empty:
-    # Conversión de columnas de fecha/timestamp
-    date_columns = [col for col in df.columns if 'date' in col or 'timestamp' in col]
-    for col in date_columns:
-        df[col] = pd.to_datetime(df[col], errors='coerce')
-
-    # ----------------------------------------------------
-    # FILTROS LATERALES
-    # ----------------------------------------------------
-    st.sidebar.header("Filtros Globales")
-    selected_state = st.sidebar.multiselect(
-        "Seleccionar Estado(s) del Cliente", 
-        options=sorted(df['customer_state'].unique()) if 'customer_state' in df.columns else []
+    """Devuelve (orders, items).
+ 
+    orders -> una fila por pedido (con cliente, estado y valor pagado).
+    items  -> una fila por ítem de pedido (con categoría del producto).
+ 
+    OJO: olist_order_items NO trae precio. El valor monetario del pedido
+    sale de olist_order_payments.payment_value (1 fila por pedido), por eso
+    el análisis de ventas se hace a nivel de PEDIDO para no duplicar ingresos.
+    """
+    orders = _read("olist_orders_dataset")
+    customers = _read("olist_customers_dataset")
+    payments = _read("olist_order_payments_dataset")
+    items = _read("olist_order_items_dataset")
+    products = _read("olist_products_dataset")
+ 
+    # Fechas
+    for col in [
+        "order_purchase_timestamp",
+        "order_delivered_customer_date",
+        "order_estimated_delivery_date",
+    ]:
+        orders[col] = pd.to_datetime(orders[col], errors="coerce")
+ 
+    # Pedidos válidos (sin cancelados / no disponibles)
+    orders = orders[~orders["order_status"].isin(EXCLUDED_STATUS)]
+ 
+    # Pagos: por seguridad se agrupa por pedido (evita duplicar ingresos)
+    pay = payments.groupby("order_id", as_index=False)["payment_value"].sum()
+ 
+    orders = (
+        orders.merge(customers[["customer_id", "customer_unique_id", "customer_state"]],
+                     on="customer_id", how="inner")
+        .merge(pay, on="order_id", how="left")
     )
-    
-    if selected_state:
-        df_filtered = df[df['customer_state'].isin(selected_state)]
-    else:
-        df_filtered = df.copy()
-
-    # ----------------------------------------------------
-    # CÁLCULOS DE VARIABLES GENERALES (Fila Superior)
-    # ----------------------------------------------------
-    if 'price' in df_filtered.columns and 'order_purchase_timestamp' in df_filtered.columns:
-        df_filtered['order_month'] = df_filtered['order_purchase_timestamp'].dt.to_period('M').astype(str)
-        total_revenue = df_filtered['price'].sum()
-    else:
-        total_revenue = 0
-
-    avg_purchase_price = df_filtered['price'].mean() if 'price' in df_filtered.columns else 0
-
-    if {'order_delivered_customer_date', 'order_estimated_delivery_date'}.issubset(df_filtered.columns):
-        valid_delivery = df_filtered.dropna(subset=['order_delivered_customer_date', 'order_estimated_delivery_date'])
-        if len(valid_delivery) > 0:
-            on_time_shipping = (valid_delivery['order_delivered_customer_date'] <= valid_delivery['order_estimated_delivery_date']).mean() * 100
-        else:
-            on_time_shipping = 0.0
-    else:
-        on_time_shipping = 0.0
-
-    if {'customer_unique_id', 'order_purchase_timestamp'}.issubset(df_filtered.columns):
-        customer_orders = df_filtered.groupby('customer_unique_id')['order_purchase_timestamp'].agg(['min', 'max']).reset_index()
-        customer_orders['days_diff'] = (customer_orders['max'] - customer_orders['min']).dt.days
-        
-        total_customers = len(customer_orders)
-        if total_customers > 0:
-            repeat_3m = (customer_orders['days_diff'] >= 90).mean() * 100
-            repeat_7m = (customer_orders['days_diff'] >= 210).mean() * 100
-            repeat_2y = (customer_orders['days_diff'] >= 730).mean() * 100
-        else:
-            repeat_3m = repeat_7m = repeat_2y = 0.0
-    else:
-        repeat_3m = repeat_7m = repeat_2y = 0.0
-
-    # ----------------------------------------------------
-    # RENDERIZADO DE LA FILA SUPERIOR (Métricas Clave)
-    # ----------------------------------------------------
-    st.subheader("📌 Indicadores Clave Generales")
-    col1, col2, col3, col4 = st.columns(4)
-    
-    col1.metric("Revenue Total", f"${total_revenue:,.2f}")
-    col2.metric("Precio Promedio Compra", f"${avg_purchase_price:,.2f}")
-    col3.metric("Cumplimiento Envíos", f"{on_time_shipping:.1f}%")
-    col4.metric("Clientes Retención (3 Meses)", f"{repeat_3m:.1f}%")
-
-    col5, col6, col7 = st.columns(3)
-    col5.metric("Retención (7 Meses)", f"{repeat_7m:.1f}%")
-    col6.metric("Retención (2 Años)", f"{repeat_2y:.1f}%")
-
-    if 'product_id' in df_filtered.columns:
-        top_products = df_filtered['product_id'].value_counts().head(5).reset_index()
-        top_products.columns = ['Product ID', 'Cantidad Comprada']
-        col7.write("🏆 **Top 5 Productos más Comprados**")
-        col7.dataframe(top_products, hide_index=True)
-
-    st.markdown("---")
-
-    # ----------------------------------------------------
-    # MAPA CLOROPLETH SEGÚN VARIABLE SELECCIONADA
-    # ----------------------------------------------------
-    st.subheader("🗺️ Mapa Geográfico por Estado (Brasil - Olist)")
-    
-    metric_choice = st.selectbox(
-        "Seleccione la variable a plasmar en el mapa:",
-        options=[
-            "Revenue Total por Estado", 
-            "Precio Promedio de Compra por Estado", 
-            "% Cumplimiento de Envíos por Estado",
-            "Tasa de Recompra (3 Meses) por Estado"
-        ]
-    )
-
-    if 'customer_state' in df_filtered.columns:
-        if metric_choice == "Revenue Total por Estado":
-            map_df = df_filtered.groupby('customer_state')['price'].sum().reset_index()
-            map_df.columns = ['state', 'value']
-            color_label = "Revenue ($)"
-        elif metric_choice == "Precio Promedio de Compra por Estado":
-            map_df = df_filtered.groupby('customer_state')['price'].mean().reset_index()
-            map_df.columns = ['state', 'value']
-            color_label = "Precio Promedio ($)"
-        elif metric_choice == "% Cumplimiento de Envíos por Estado":
-            df_filtered['on_time'] = df_filtered['order_delivered_customer_date'] <= df_filtered['order_estimated_delivery_date']
-            map_df = df_filtered.groupby('customer_state')['on_time'].mean().reset_index()
-            map_df['value'] = map_df['on_time'] * 100
-            map_df = map_df[['customer_state', 'value']]
-            map_df.columns = ['state', 'value']
-            color_label = "% Cumplimiento"
-        else:
-            cust_st = df_filtered.groupby(['customer_unique_id', 'customer_state'])['order_purchase_timestamp'].agg(['min', 'max']).reset_index()
-            cust_st['is_repeat_3m'] = (cust_st['max'] - cust_st['min']).dt.days >= 90
-            map_df = cust_st.groupby('customer_state')['is_repeat_3m'].mean().reset_index()
-            map_df['value'] = map_df['is_repeat_3m'] * 100
-            map_df = map_df[['customer_state', 'value']]
-            map_df.columns = ['state', 'value']
-            color_label = "% Recompra (3M)"
-
-        # Gráfico Choropleth adaptado para estados de Brasil (usando scope de Sudamérica)
-        fig = px.choropleth(
-            map_df,
-            locations='state',
-            locationmode="USA-states", # Nota: Para estados brasileños en Plotly se suele mapear mediante GeoJSON o abreviaturas estándar en scope latinoamericano.
-            color='value',
-            scope="south america", 
-            color_continuous_scale="Blues",
-            labels={'value': color_label}
+    orders["payment_value"] = orders["payment_value"].fillna(0.0)
+    orders["order_month"] = orders["order_purchase_timestamp"].dt.to_period("M").astype(str)
+ 
+    # Cumplimiento: se compara por FECHA (la fecha estimada viene sin hora;
+    # comparar con el timestamp completo marcaría como tarde entregas del mismo día)
+    delivered = orders["order_delivered_customer_date"]
+    orders["is_delivered"] = delivered.notna()
+    orders["on_time"] = (
+        delivered.dt.normalize() <= orders["order_estimated_delivery_date"].dt.normalize()
+    ).where(orders["is_delivered"])
+ 
+    # Ítems con categoría de producto, solo de pedidos válidos
+    items = items[items["order_id"].isin(orders["order_id"])]
+    items = items.merge(products, on="product_id", how="left")
+    items["product_category_name"] = items["product_category_name"].fillna("sin categoría")
+    items = items.merge(orders[["order_id", "customer_state"]], on="order_id", how="left")
+ 
+    return orders.reset_index(drop=True), items.reset_index(drop=True)
+ 
+ 
+@st.cache_data(show_spinner=False)
+def build_customer_table(orders: pd.DataFrame) -> pd.DataFrame:
+    """Una fila por cliente único: primera compra, estado de la primera compra
+    y días hasta su segunda compra (NaN si nunca recompró)."""
+    o = orders.sort_values("order_purchase_timestamp")
+    o = o.assign(rank=o.groupby("customer_unique_id").cumcount())
+ 
+    first = o[o["rank"] == 0].set_index("customer_unique_id")
+    second = o[o["rank"] == 1].set_index("customer_unique_id")
+ 
+    cust = pd.DataFrame({
+        "first_purchase": first["order_purchase_timestamp"],
+        "state": first["customer_state"],
+    })
+    cust["second_purchase"] = second["order_purchase_timestamp"]
+    cust["days_to_repeat"] = (cust["second_purchase"] - cust["first_purchase"]).dt.days
+    return cust.reset_index()
+ 
+ 
+@st.cache_data(show_spinner=False)
+def load_geojson():
+    with urllib.request.urlopen(GEOJSON_URL, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+ 
+ 
+# ----------------------------------------------------------------------------
+# Funciones de cálculo
+# ----------------------------------------------------------------------------
+def repeat_rate(cust: pd.DataFrame, days: int, max_date: pd.Timestamp):
+    """% de clientes que volvieron a comprar dentro de `days` días de su primera
+    compra. Se cuentan solo clientes cuya ventana ya pudo completarse (primera
+    compra al menos `days` días antes del último dato); de lo contrario la tasa
+    quedaría artificialmente baja.
+    Si NINGÚN cliente tiene la ventana completa (p. ej. 2 años en un dataset que
+    solo cubre ~2 años), se usa a todos los clientes como aproximación.
+    Devuelve (tasa %, clientes en la base, ventana_completa)."""
+    eligible = cust[cust["first_purchase"] <= max_date - pd.Timedelta(days=days)]
+    complete = not eligible.empty
+    base = eligible if complete else cust
+    if base.empty:
+        return 0.0, 0, complete
+    repeated = base["days_to_repeat"] <= days  # NaN -> False
+    return repeated.mean() * 100, len(base), complete
+ 
+ 
+def on_time_rate(orders: pd.DataFrame) -> float:
+    delivered = orders[orders["is_delivered"]]
+    return delivered["on_time"].astype(float).mean() * 100 if len(delivered) else 0.0
+ 
+ 
+def metric_by_state(orders: pd.DataFrame, cust: pd.DataFrame, metric: str, max_date) -> pd.DataFrame:
+    if metric == "Revenue total":
+        s = orders.groupby("customer_state")["payment_value"].sum()
+    elif metric == "Precio promedio de compra":
+        s = orders.groupby("customer_state")["payment_value"].mean()
+    elif metric == "% Cumplimiento de envíos":
+        d = orders[orders["is_delivered"]]
+        s = d.groupby("customer_state")["on_time"].apply(lambda x: x.astype(float).mean() * 100)
+    else:  # Recompra por ventana
+        label = metric.replace("Tasa de recompra (", "").replace(")", "")
+        days = WINDOWS[label]
+        s = cust.groupby("state").apply(
+            lambda g: repeat_rate(g, days, max_date)[0], include_groups=False
         )
-        
-        fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("No se encontró la columna 'customer_state' en el conjunto de datos.")
-
+    out = s.rename("value").reset_index()
+    out.columns = ["state", "value"]
+    return out
+ 
+ 
+# ----------------------------------------------------------------------------
+# Carga
+# ----------------------------------------------------------------------------
+try:
+    with st.spinner("Cargando y uniendo los conjuntos de datos..."):
+        orders_all, items_all = load_data()
+        cust_all = build_customer_table(orders_all)
+except Exception as e:
+    st.error(f"No se pudieron cargar los archivos parquet. Verifica las rutas o la conexión. Error: {e}")
+    st.stop()
+ 
+max_date = orders_all["order_purchase_timestamp"].max()
+ 
+# ----------------------------------------------------------------------------
+# Filtros laterales
+# ----------------------------------------------------------------------------
+st.sidebar.header("Filtros Globales")
+all_states = sorted(orders_all["customer_state"].dropna().unique())
+selected_states = st.sidebar.multiselect("Estado(s) del cliente", options=all_states)
+ 
+if selected_states:
+    orders = orders_all[orders_all["customer_state"].isin(selected_states)]
+    items = items_all[items_all["customer_state"].isin(selected_states)]
+    cust = cust_all[cust_all["state"].isin(selected_states)]
 else:
-    st.info("No se pudieron procesar los datos. Por favor, asegúrate de que los archivos estén disponibles en la rama principal de GitHub.")
+    orders, items, cust = orders_all, items_all, cust_all
+ 
+if orders.empty:
+    st.warning("No hay datos para los filtros seleccionados.")
+    st.stop()
+ 
+st.sidebar.caption(
+    f"Pedidos analizados: {len(orders):,}\n\n"
+    f"Se excluyen pedidos {', '.join(EXCLUDED_STATUS)}.\n\n"
+    f"Datos hasta: {max_date:%Y-%m-%d}"
+)
+ 
+# ----------------------------------------------------------------------------
+# Fila superior: indicadores generales
+# ----------------------------------------------------------------------------
+st.subheader("📌 Indicadores Clave Generales")
+ 
+total_revenue = orders["payment_value"].sum()
+avg_purchase = orders["payment_value"].mean()
+on_time = on_time_rate(orders)
+rates = {label: repeat_rate(cust, days, max_date) for label, days in WINDOWS.items()}
+ 
+c1, c2, c3 = st.columns(3)
+c1.metric("Revenue Total", f"${total_revenue:,.2f}")
+c2.metric("Precio Promedio de Compra (por pedido)", f"${avg_purchase:,.2f}")
+c3.metric("Cumplimiento de Envíos", f"{on_time:.1f}%")
+ 
+c4, c5, c6, c7 = st.columns([1, 1, 1, 2])
+for col, (label, (rate, n, complete)) in zip([c4, c5, c6], rates.items()):
+    note = (f"Base: {n:,} clientes con ventana completa" if complete else
+            f"Base: {n:,} clientes. Aproximación: el dataset no cubre {label} completos "
+            "de seguimiento para ningún cliente.")
+    col.metric(f"Recompra ({label})", f"{rate:.1f}%", help=note)
+ 
+top_products = (
+    items.groupby(["product_id", "product_category_name"])
+    .size()
+    .sort_values(ascending=False)
+    .head(5)
+    .reset_index(name="Cantidad Comprada")
+    .rename(columns={"product_id": "Producto", "product_category_name": "Categoría"})
+)
+c7.write("🏆 **Top 5 Productos más Comprados**")
+c7.dataframe(top_products, hide_index=True)
+ 
+# Revenue por mes
+st.markdown("#### 📅 Revenue Total por Mes")
+monthly = orders.groupby("order_month", as_index=False)["payment_value"].sum()
+fig_month = px.bar(
+    monthly, x="order_month", y="payment_value",
+    labels={"order_month": "Mes", "payment_value": "Revenue ($)"},
+)
+fig_month.update_layout(margin={"r": 0, "t": 10, "l": 0, "b": 0}, xaxis_tickangle=-45)
+st.plotly_chart(fig_month)
+ 
+st.markdown("---")
+ 
+# ----------------------------------------------------------------------------
+# Mapa coroplético de Brasil
+# ----------------------------------------------------------------------------
+st.subheader("🗺️ Mapa Geográfico por Estado (Brasil)")
+ 
+metric_options = {
+    "Revenue total": "Revenue ($)",
+    "Precio promedio de compra": "Precio promedio ($)",
+    "% Cumplimiento de envíos": "% Cumplimiento",
+    "Tasa de recompra (3 meses)": "% Recompra 3M",
+    "Tasa de recompra (7 meses)": "% Recompra 7M",
+    "Tasa de recompra (2 años)": "% Recompra 2A",
+}
+metric_choice = st.selectbox("Seleccione la variable a mostrar en el mapa:", list(metric_options))
+ 
+map_df = metric_by_state(orders, cust, metric_choice, max_date)
+ 
+try:
+    geojson = load_geojson()
+    fig_map = px.choropleth(
+        map_df,
+        geojson=geojson,
+        locations="state",
+        featureidkey="properties.sigla",
+        color="value",
+        color_continuous_scale="Blues",
+        labels={"value": metric_options[metric_choice], "state": "Estado"},
+        hover_name="state",
+    )
+    fig_map.update_geos(fitbounds="locations", visible=False)
+    fig_map.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0}, height=600)
+    st.plotly_chart(fig_map)
+except Exception as e:
+    st.error(f"No se pudo cargar el GeoJSON de Brasil: {e}")
+ 
+with st.expander("Ver datos del mapa"):
+    st.dataframe(map_df.sort_values("value", ascending=False), hide_index=True)
+ 
+st.caption(
+    "Notas: el revenue se calcula con el valor pagado por pedido (payment_value). "
+    "La recompra mide el % de clientes únicos con una segunda compra dentro de 90 / 210 / 730 días "
+    "desde su primera compra, considerando solo clientes cuya ventana ya pudo completarse."
+)
