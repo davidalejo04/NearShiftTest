@@ -432,7 +432,6 @@ Aquí tienes los 3 DataFrames para analizar:
 ### DataFrame 3: Inventario
 {payments.to_markdown(index=False)}
 
-
 ### DataFrame 4: Ventas
 {items.to_markdown(index=False)}
 
