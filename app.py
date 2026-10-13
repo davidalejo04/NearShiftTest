@@ -9,6 +9,7 @@ import plotly.express as px
 import streamlit as st
 
 from groq import Groq
+import tabulate
  
 # ----------------------------------------------------------------------------
 # Configuración de la página (sin panel lateral)
