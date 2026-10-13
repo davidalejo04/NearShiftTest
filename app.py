@@ -425,32 +425,17 @@ d = items.merge(orders[["order_id", "is_delivered", "on_time", "payment_value"]]
 d["revenue"] = d["payment_value"] / d.groupby("order_id")["order_id"].transform("size")
 d = d[d["is_delivered"]]
 
-resumen = (
-    d.groupby("product_category_name")
-     .agg(unidades=("order_id", "size"), revenue=("revenue", "sum"), cumplimiento=("on_time", "mean"))
-     .query("unidades >= 30")
-     .assign(cumplimiento=lambda x: x["cumplimiento"] * 100)
-     .sort_values("cumplimiento", ascending=False)
-     .head(15)
-     .round(1)
-)
-
-st.write("Categorías con mayor % de cumplimiento de envíos:")
-st.dataframe(resumen)                      # antes era print(resumen)
+                   # antes era print(resumen)
 
 # 2) Pregunta a la IA solo cuando se presiona el botón (evita llamadas en cada rerun)
-if st.button("Analizar con IA"):
-    if resumen.empty:
-        st.warning("No hay suficientes datos para la selección actual.")
-    else:
-        prompt = f"""Tienes esta tabla de las categorías con mayor % de cumplimiento de envíos
-(unidades vendidas, revenue y cumplimiento):
+contexto_dataframes = f"""
+{d.to_markdown(index=False)}
+"""
+prompt = f"""
+{contexto_dataframes}
 
-{resumen.to_csv()}
-
-Pregunta: ¿cuál de estas categorías tiene mejor desempeño de ventas?
-Responde en español, breve y citando las cifras."""
-
+Pregunta: Analiza los 3 conjuntos de datos y dime qué producto tiene mejor rendimiento de ventas en relación a su stock.
+"""
         try:
             client = Groq(api_key=os.environ["API_K"])
             with st.spinner("Pensando..."):
