@@ -417,8 +417,6 @@ if sel:
 # ----------------------------------------------------------------------------
 st.markdown("---")
 
-st.subheader("👾 PREGUNTALE A LA IA 👾")
-
 
 # --- Datos base (igual que el tuyo, solo agrego order_month para poder responder por mes) ---
 d = items.merge(orders[["order_id", "is_delivered", "on_time", "payment_value", "order_month"]], on="order_id")
@@ -467,7 +465,7 @@ for m in st.session_state["chat"]:
         st.markdown(m["content"])
 
 # --- Casilla de chat: máximo 400 caracteres ---
-pregunta = st.chat_input("Pregunta sobre ventas y cumplimiento de envíos (máx. 400 caracteres)", max_chars=400)
+pregunta = st.chat_input("👾 PREGUNTALE A LA IA 👾 sobre ventas y cumplimiento de envíos (máx. 400 caracteres)", max_chars=400)
 
 if pregunta:
     st.session_state["chat"].append({"role": "user", "content": pregunta})
