@@ -503,7 +503,7 @@ if st.session_state["chat"] and st.button("Borrar conversación"):
     st.session_state["chat"] = []
     st.rerun()
 
-st.markdown("---")
+#st.markdown("---")
 
 st.subheader("📝 Consideraciones")
 notes = [
