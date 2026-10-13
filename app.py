@@ -4,33 +4,41 @@ import plotly.express as px
 
 # Configuración de la página de Streamlit
 st.set_page_config(
-    page_title="Dashboard de Logística y Ventas",
+    page_title="Dashboard de Logística y Ventas (Olist)",
     page_icon="📊",
     layout="wide"
 )
 
-st.title("📊 Dashboard Ejecutivo: Ventas, Retención y Envíos")
+st.title("📊 Dashboard Ejecutivo: Ventas, Retención y Envíos (Olist)")
 st.markdown("---")
 
-# 1. Carga de datos desde GitHub (Raw links)
+# 1. Carga de datos desde GitHub (Raw links para los múltiples archivos parquet)
 @st.cache_data
 def load_data():
-    # Reemplaza o añade las URLs raw de tus archivos parquet en GitHub
-    # Ejemplo de enlace raw: https://raw.githubusercontent.com/usuario/repo/commit/ruta/archivo.parquet
-    url_parquet = "https://raw.githubusercontent.com/davidalejo04/NearShiftTest/5256e47442ab27433e1d91299888832c999d8315/data/tu_archivo.parquet"
+    base_url = "https://raw.githubusercontent.com/davidalejo04/NearShiftTest/main/data"
     
-    # Lectura directa usando pandas (requiere pyarrow instalado)
-    df = pd.read_parquet(url_parquet)
+    # Lectura de los archivos principales necesarios para el modelo relacional
+    orders = pd.read_parquet(f"{base_url}/olist_orders_dataset.parquet")
+    order_items = pd.read_parquet(f"{base_url}/olist_order_items_dataset.parquet")
+    customers = pd.read_parquet(f"{base_url}/olist_customers_dataset.parquet")
+    products = pd.read_parquet(f"{base_url}/olist_products_dataset.parquet")
+    
+    # Cruce (Merge) de las tablas para unificar el dataset de análisis
+    df = order_items.merge(orders, on="order_id", how="inner")
+    df = df.merge(customers, on="customer_id", how="inner")
+    df = df.merge(products, on="product_id", how="inner")
+    
     return df
 
 try:
-    df = load_data()
+    with st.spinner("Cargando y uniendo los conjuntos de datos desde GitHub..."):
+        df = load_data()
 except Exception as e:
-    st.error(f"No se pudo cargar el archivo parquet desde GitHub. Verifica la URL o el nombre exacto del archivo en la ruta. Error: {e}")
+    st.error(f"No se pudieron cargar los archivos parquet desde GitHub. Verifica las rutas o la conexión. Error: {e}")
     df = pd.DataFrame()
 
 if not df.empty:
-    # Asegurar conversiones de fecha si es necesario
+    # Conversión de columnas de fecha/timestamp
     date_columns = [col for col in df.columns if 'date' in col or 'timestamp' in col]
     for col in date_columns:
         df[col] = pd.to_datetime(df[col], errors='coerce')
@@ -40,8 +48,8 @@ if not df.empty:
     # ----------------------------------------------------
     st.sidebar.header("Filtros Globales")
     selected_state = st.sidebar.multiselect(
-        "Seleccionar Estado(s)", 
-        options=df['customer_state'].unique() if 'customer_state' in df.columns else []
+        "Seleccionar Estado(s) del Cliente", 
+        options=sorted(df['customer_state'].unique()) if 'customer_state' in df.columns else []
     )
     
     if selected_state:
@@ -61,7 +69,11 @@ if not df.empty:
     avg_purchase_price = df_filtered['price'].mean() if 'price' in df_filtered.columns else 0
 
     if {'order_delivered_customer_date', 'order_estimated_delivery_date'}.issubset(df_filtered.columns):
-        on_time_shipping = (df_filtered['order_delivered_customer_date'] <= df_filtered['order_estimated_delivery_date']).mean() * 100
+        valid_delivery = df_filtered.dropna(subset=['order_delivered_customer_date', 'order_estimated_delivery_date'])
+        if len(valid_delivery) > 0:
+            on_time_shipping = (valid_delivery['order_delivered_customer_date'] <= valid_delivery['order_estimated_delivery_date']).mean() * 100
+        else:
+            on_time_shipping = 0.0
     else:
         on_time_shipping = 0.0
 
@@ -105,7 +117,7 @@ if not df.empty:
     # ----------------------------------------------------
     # MAPA CLOROPLETH SEGÚN VARIABLE SELECCIONADA
     # ----------------------------------------------------
-    st.subheader("🗺️ Mapa Geográfico por Estado (Choropleth)")
+    st.subheader("🗺️ Mapa Geográfico por Estado (Brasil - Olist)")
     
     metric_choice = st.selectbox(
         "Seleccione la variable a plasmar en el mapa:",
@@ -142,10 +154,11 @@ if not df.empty:
             map_df.columns = ['state', 'value']
             color_label = "% Recompra (3M)"
 
+        # Gráfico Choropleth adaptado para estados de Brasil (usando scope de Sudamérica)
         fig = px.choropleth(
             map_df,
             locations='state',
-            locationmode="ISO-3", 
+            locationmode="USA-states", # Nota: Para estados brasileños en Plotly se suele mapear mediante GeoJSON o abreviaturas estándar en scope latinoamericano.
             color='value',
             scope="south america", 
             color_continuous_scale="Blues",
@@ -158,4 +171,4 @@ if not df.empty:
         st.warning("No se encontró la columna 'customer_state' en el conjunto de datos.")
 
 else:
-    st.info("Por favor, verifica la URL del archivo Parquet en la función `load_data()`.")
+    st.info("No se pudieron procesar los datos. Por favor, asegúrate de que los archivos estén disponibles en la rama principal de GitHub.")
