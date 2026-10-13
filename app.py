@@ -430,29 +430,40 @@ Aquí tienes los 3 DataFrames para analizar:
 
 
 # 3. Enviar a la API de Groq
-client = Groq(api_key=API_K)
 
-prompt = f"""
-{contexto_dataframes}
+client = Groq(api_key=os.environ["API_K"])  # no dejes la clave escrita en el código
 
-Pregunta: Analiza datos y dime qué producto con mayor cumplimiento de envios tiene mejor desempeño de ventas.
-"""
+# 1) Resumen con pandas: cumplimiento y ventas por producto (categoría)
+d = items.merge(orders[["order_id", "is_delivered", "on_time", "payment_value"]], on="order_id")
+d["revenue"] = d["payment_value"] / d.groupby("order_id")["order_id"].transform("size")  # reparte el pago entre los ítems
+d = d[d["is_delivered"]]
+
+resumen = (
+    d.groupby("product_category_name")
+     .agg(unidades=("order_id", "size"), revenue=("revenue", "sum"), cumplimiento=("on_time", "mean"))
+     .query("unidades >= 30")                      # evita categorías con muestra muy pequeña
+     .assign(cumplimiento=lambda x: x["cumplimiento"] * 100)
+     .sort_values("cumplimiento", ascending=False)
+     .head(15)
+     .round(1)
+)
+print(resumen)                                     # esta tabla ya responde la pregunta
+
+# 2) Solo la tabla resumida va al modelo
+prompt = f"""Tienes esta tabla de las 15 categorías con mayor % de cumplimiento de envíos
+(unidades vendidas, revenue y cumplimiento):
+
+{resumen.to_csv()}
+
+Pregunta: ¿cuál de las categorías con mayor cumplimiento tiene mejor desempeño de ventas?
+Responde en español, breve y citando las cifras."""
 
 completion = client.chat.completions.create(
-    model="meta-llama/llama-prompt-guard-2-22m",
-    messages=[
-      {
-        "role": "user",
-        "content": prompt
-      }
-    ],
-    temperature=1,
-    max_completion_tokens=100,
-    top_p=1,
-    stream=False,
-    stop=None
+    model="llama-3.3-70b-versatile",               # modelo de chat
+    messages=[{"role": "user", "content": prompt}],
+    temperature=0.3,
+    max_completion_tokens=800,
 )
-
 print(completion.choices[0].message.content)
 
 
