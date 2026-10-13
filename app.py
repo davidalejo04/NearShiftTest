@@ -419,17 +419,6 @@ st.markdown("---")
 
 st.subheader("👾 PREGUNTALE A LA IA 👾")
 
-# 2. Convertirlos a texto en formato Markdown
-contexto_dataframes = f"""
-Aquí tienes los 3 DataFrames para analizar:
-
-### DataFrame 1: Productos
-{orders.head(1000).to_markdown(index=False)}
-
-"""
-
-
-# 3. Enviar a la API de Groq
 
 client = Groq(api_key=os.environ["API_K"])  # no dejes la clave escrita en el código
 
