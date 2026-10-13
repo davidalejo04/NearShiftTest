@@ -438,12 +438,23 @@ prompt = f"""
 Pregunta: Analiza los  conjuntos de datos y dime qué producto con mayor cumplimiento de envios tiene mejor desempeño de ventas.
 """
 
-chat_completion = client.chat.completions.create(
-    messages=[{"role": "user", "content": prompt}],
-    model="meta-llama/llama-prompt-guard-2-22m",  # O el modelo de Groq que prefieras
+client = Groq()
+completion = client.chat.completions.create(
+    model="meta-llama/llama-prompt-guard-2-22m",
+    messages=[
+      {
+        "role": "user",
+        "content": ""
+      }
+    ],
+    temperature=1,
+    max_completion_tokens=1,
+    top_p=1,
+    stream=False,
+    stop=None
 )
 
-print(chat_completion.choices[0].message.content)
+print(completion.choices[0].message)
 
 
 st.markdown("---")
