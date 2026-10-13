@@ -3,3 +3,4 @@ pandas>=2.0.0
 plotly>=5.24.0
 pyarrow>=14.0.0
 groq
+tabulate
