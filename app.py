@@ -436,25 +436,25 @@ prompt = f"""
 
 Pregunta: Analiza los 3 conjuntos de datos y dime qué producto tiene mejor rendimiento de ventas en relación a su stock.
 """
-        try:
-            client = Groq(api_key=os.environ["API_K"])
-            with st.spinner("Pensando..."):
-                completion = client.chat.completions.create(
-                    model="openai/gpt-oss-120b",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3,
-                    max_completion_tokens=3000,   # el razonamiento también consume tokens
-                    reasoning_effort="low",
-                )
-            choice = completion.choices[0]
-            texto = choice.message.content
-            if texto and texto.strip():
-                st.markdown(texto)                # antes era print(...)
-            else:
-                st.warning(f"El modelo no devolvió texto (finish_reason: {choice.finish_reason}). "
-                           "Sube max_completion_tokens o prueba otro modelo.")
-        except Exception as e:
-            st.error(f"Error al consultar la IA: {e}")
+try:
+    client = Groq(api_key=os.environ["API_K"])
+    with st.spinner("Pensando..."):
+        completion = client.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_completion_tokens=3000,   # el razonamiento también consume tokens
+            reasoning_effort="low",
+        )
+    choice = completion.choices[0]
+    texto = choice.message.content
+    if texto and texto.strip():
+        st.markdown(texto)                # antes era print(...)
+    else:
+        st.warning(f"El modelo no devolvió texto (finish_reason: {choice.finish_reason}). "
+                   "Sube max_completion_tokens o prueba otro modelo.")
+except Exception as e:
+    st.error(f"Error al consultar la IA: {e}")
 
 st.markdown("---")
 
