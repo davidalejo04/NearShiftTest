@@ -435,7 +435,7 @@ client = Groq(api_key=API_K)
 prompt = f"""
 {contexto_dataframes}
 
-Pregunta: Analiza los  conjuntos de datos y dime qué producto con mayor cumplimiento de envios tiene mejor desempeño de ventas.
+Pregunta: Analiza datos y dime qué producto con mayor cumplimiento de envios tiene mejor desempeño de ventas.
 """
 
 completion = client.chat.completions.create(
