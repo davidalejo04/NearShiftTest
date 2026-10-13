@@ -438,7 +438,6 @@ prompt = f"""
 Pregunta: Analiza los  conjuntos de datos y dime qué producto con mayor cumplimiento de envios tiene mejor desempeño de ventas.
 """
 
-client = Groq()
 completion = client.chat.completions.create(
     model="meta-llama/llama-prompt-guard-2-22m",
     messages=[
