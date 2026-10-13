@@ -411,6 +411,14 @@ if sel:
 # Consideraciones (al final del dashboard)
 # ----------------------------------------------------------------------------
 st.markdown("---")
+
+st.subheader("👾 PREGUNTALE A LA IA 👾")
+
+
+
+
+st.markdown("---")
+
 st.subheader("📝 Consideraciones")
 notes = [
     f"**Pedidos analizados:** {len(orders):,} de {len(orders_all):,} · datos hasta {max_date:%Y-%m-%d}. "
