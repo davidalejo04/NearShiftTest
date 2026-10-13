@@ -426,8 +426,6 @@ Aquí tienes los 3 DataFrames para analizar:
 ### DataFrame 1: Productos
 {orders.to_markdown(index=False)}
 
-### DataFrame 2: Ventas
-{customers.to_markdown(index=False)}
 
 ### DataFrame 3: Inventario
 {payments.to_markdown(index=False)}
